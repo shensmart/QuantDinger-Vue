@@ -395,7 +395,10 @@
       <section class="rail-panel monitor-panel">
         <div class="panel-head">
           <span><a-icon type="clock-circle" /> {{ text.monitors }}</span>
-          <a-button size="small" type="link" :loading="loadingMonitors" @click="loadMonitors"><a-icon type="reload" /></a-button>
+          <div class="panel-head-actions">
+            <a-button size="small" type="link" :loading="loadingMonitors" :title="text.refresh" @click="loadMonitors"><a-icon type="reload" /></a-button>
+            <a-button size="small" type="link" @click="openTaskModal()"><a-icon type="plus" /> {{ text.newTask }}</a-button>
+          </div>
         </div>
         <div v-if="monitors.length === 0" class="empty-mini">{{ text.noMonitors }}</div>
         <div v-else class="monitor-list">
@@ -474,6 +477,13 @@
             <a-checkbox value="telegram">{{ text.notifyTelegram }}</a-checkbox>
             <a-checkbox value="webhook"><a-icon type="api" /> {{ text.notifyWebhook }}</a-checkbox>
           </a-checkbox-group>
+        </a-form-item>
+        <a-form-item :label="text.focusConditions">
+          <a-textarea
+            v-model="taskForm.focus_conditions"
+            :placeholder="text.focusConditionsPlaceholder"
+            :rows="4"
+          />
         </a-form-item>
         <a-alert :message="text.monitorTip" type="info" show-icon />
       </a-form>
@@ -775,7 +785,7 @@ export default {
       taskModalVisible: false,
       savingMonitor: false,
       taskTarget: null,
-      taskForm: { interval_min: 240, notify_channels: [] },
+      taskForm: { interval_min: 240, notify_channels: [], focus_conditions: '' },
       composerHeight: 98,
       composerMinHeight: 98,
       composerMaxHeight: 236,
@@ -860,6 +870,8 @@ export default {
         removeWatchConfirm: t('removeWatchConfirm', 'Remove this symbol from watchlist?'),
         monitors: t('monitors', 'AI Scheduled Analysis'),
         noMonitors: t('noMonitors', 'No scheduled tasks'),
+        newTask: t('newTask', this.isZh ? '新建任务' : 'New task'),
+        refresh: t('refresh', this.isZh ? '刷新' : 'Refresh'),
         running: t('running', 'Running'),
         paused: t('paused', 'Paused'),
         eventDetail: t('eventDetail', 'Event detail'),
@@ -880,6 +892,8 @@ export default {
         notifyEmail: t('notifyEmail', 'Email'),
         notifyTelegram: t('notifyTelegram', 'Telegram'),
         notifyWebhook: t('notifyWebhook', 'Webhook'),
+        focusConditions: t('focusConditions', this.isZh ? '关注条件' : 'Focus conditions'),
+        focusConditionsPlaceholder: t('focusConditionsPlaceholder', this.isZh ? '填写每次分析需要重点关注的指标、风险或事件' : 'Describe the indicators, risks, or events to focus on'),
         monitorTip: t('monitorTip', 'AI will re-check this symbol on schedule and keep a record.'),
         save: t('save', 'Save'),
         cancel: t('cancel', 'Cancel'),
@@ -2357,7 +2371,7 @@ export default {
         return
       }
       if (action && action.type === 'create_monitor_task') {
-        this.createMonitorFromAction(action.payload || {})
+        this.openTaskModal((action.payload && action.payload.target) || action.payload, action.payload || {})
         return
       }
       if (action && action.type === 'export_report_pdf') {
@@ -2740,6 +2754,7 @@ export default {
         target,
         interval_min: draft.interval_min,
         notify_channels: draft.record_only ? [] : this.normalizeMonitorChannels(draft.notify_channels),
+        focus_conditions: String(draft.focus_conditions || '').trim(),
         name: 'AI-' + target.symbol + '-' + draft.interval_min + 'm'
       }
       this.messages.push({
@@ -2773,6 +2788,7 @@ export default {
         const channels = this.normalizeMonitorChannels(Array.isArray(payload.notify_channels)
           ? payload.notify_channels
           : (Array.isArray(payload.channels) ? payload.channels : []))
+        const focusConditions = String(payload.focus_conditions || payload.prompt || '').trim()
         const res = await addMonitor({
           name: payload.name || ('AI-' + target.symbol + '-' + interval + 'm'),
           position_ids: [],
@@ -2781,7 +2797,8 @@ export default {
             run_interval_minutes: interval,
             symbol: target.symbol,
             market: target.market,
-            focus_conditions: '',
+            focus_conditions: focusConditions,
+            prompt: focusConditions,
             language: this.$store && this.$store.getters ? (this.$store.getters.lang || 'zh-CN') : (this.$i18n ? this.$i18n.locale : 'zh-CN')
           },
           notification_config: { channels },
@@ -3913,9 +3930,13 @@ export default {
         .find(value => typeof value === 'string' && value.trim())
       return candidate ? candidate.trim() : ''
     },
-    openTaskModal (item) {
+    openTaskModal (item, payload = {}) {
       this.taskTarget = item ? this.normalizeSymbolOption(item) : this.normalizeSymbolOption(this.context)
-      this.taskForm = { interval_min: 240, notify_channels: [] }
+      this.taskForm = {
+        interval_min: Number(payload.interval_min || payload.interval || 240),
+        notify_channels: this.normalizeMonitorChannels(payload.notify_channels || payload.channels || []),
+        focus_conditions: String(payload.focus_conditions || payload.prompt || '').trim()
+      }
       this.taskModalVisible = true
     },
     async saveMonitor () {
@@ -3925,6 +3946,7 @@ export default {
       try {
         const interval = Number(this.taskForm.interval_min || 240)
         const channels = this.normalizeMonitorChannels(this.taskForm.notify_channels || [])
+        const focusConditions = String(this.taskForm.focus_conditions || '').trim()
         const res = await addMonitor({
           name: `AI-${target.symbol}-${interval}m`,
           position_ids: [],
@@ -3933,6 +3955,8 @@ export default {
             run_interval_minutes: interval,
             symbol: target.symbol,
             market: target.market,
+            focus_conditions: focusConditions,
+            prompt: focusConditions,
             language: this.$store && this.$store.getters ? (this.$store.getters.lang || 'zh-CN') : (this.$i18n ? this.$i18n.locale : 'zh-CN')
           },
           notification_config: { channels },
@@ -4432,6 +4456,14 @@ export default {
     setAgentUsageActions (message, actions = [], usage = null) {
       if (!message) return
       const current = (Array.isArray(message.actions) ? message.actions : []).filter(action => action && action.type !== 'agent_usage')
+      const incoming = (Array.isArray(actions) ? actions : []).filter(action => action && action.type !== 'agent_usage')
+      const merged = [...current, ...incoming].reduce((items, action) => {
+        const key = action.key || [action.type, action.path, action.label].filter(Boolean).join(':')
+        if (!items.some(item => (item.key || [item.type, item.path, item.label].filter(Boolean).join(':')) === key)) {
+          items.push(action)
+        }
+        return items
+      }, [])
       let usageAction = (Array.isArray(actions) ? actions : []).find(action => action && action.type === 'agent_usage')
       if (!usageAction && usage) {
         usageAction = {
@@ -4442,7 +4474,7 @@ export default {
           payload: usage
         }
       }
-      message.actions = usageAction ? [usageAction, ...current] : current
+      message.actions = usageAction ? [usageAction, ...merged] : merged
     },
     getAccessToken () {
       return storage.get(ACCESS_TOKEN) || storage.get('Authorization') || storage.get('token') || ''
@@ -4987,6 +5019,18 @@ export default {
   padding: 0 4px;
   color: var(--qd-accent);
   font-weight: 600;
+}
+
+.panel-head-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 1px;
+}
+
+.panel-head-actions ::v-deep .ant-btn-link {
+  padding: 0 5px;
+  white-space: nowrap;
 }
 
 .segmented {
