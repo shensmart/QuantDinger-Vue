@@ -61,6 +61,14 @@ export const asyncRouterMap = [
         hidden: true,
         meta: { title: 'menu.dashboard.universeManager', keepAlive: true, icon: 'database', permission: ['dashboard'] }
       },
+      // A-share board data (limit pools, ladder, dragon-tiger, hot list).
+      {
+        path: '/market-events',
+        name: 'MarketEvents',
+        component: () => import('@/views/market-events'),
+        hidden: true,
+        meta: { title: 'menu.dashboard.marketEvents', keepAlive: true, icon: 'fire', permission: ['dashboard'] }
+      },
       // Broker accounts.
       {
         path: '/broker-accounts',
