@@ -66,7 +66,6 @@ export const asyncRouterMap = [
         path: '/market-events',
         name: 'MarketEvents',
         component: () => import('@/views/market-events'),
-        hidden: true,
         meta: { title: 'menu.dashboard.marketEvents', keepAlive: true, icon: 'fire', permission: ['dashboard'] }
       },
       // Broker accounts.
