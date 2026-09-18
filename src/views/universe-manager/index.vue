@@ -51,6 +51,10 @@
               </div>
               <a-tag :color="item.status === 'active' ? 'green' : 'orange'">{{ statusText(item.status) }}</a-tag>
             </div>
+            <div v-if="isSmart(item)" class="item-conditions">
+              <span class="item-conditions__label">{{ t('universeManager.smartConditions') }}</span>
+              <a-tag v-for="code in tagCodesFor(item)" :key="code">{{ code }}</a-tag>
+            </div>
             <div class="item-stats">
               <div><span>{{ t('universeManager.members') }}</span><strong>{{ Number(item.member_count || 0).toLocaleString() }}</strong></div>
               <div><span>{{ t('universeManager.version') }}</span><strong>{{ universeVersion(item) }}</strong></div>
@@ -58,7 +62,7 @@
             <div class="item-actions">
               <a-button size="small" icon="unordered-list" @click="viewMembers(item)">{{ t('universeManager.viewMembers') }}</a-button>
               <a-button v-if="item.is_system && item.code !== 'watchlist'" size="small" icon="copy" :loading="cloningId === item.id" @click="clone(item)">{{ t('universeManager.copyToMine') }}</a-button>
-              <a-button v-if="isEditable(item)" size="small" icon="edit" @click="editUniverse(item)">{{ t('universeManager.edit') }}</a-button>
+              <a-button v-if="isEditable(item)" size="small" icon="edit" @click="editUniverse(item)">{{ t(isSmart(item) ? 'universeManager.editConditions' : 'universeManager.edit') }}</a-button>
             </div>
           </article>
         </div>
@@ -83,6 +87,27 @@
       <label class="field-label">{{ t('universeManager.members') }}</label>
       <a-textarea v-model="form.memberText" :rows="10" :placeholder="memberPlaceholder" />
       <small class="field-hint">{{ t('universeManager.memberHint') }}</small>
+    </a-modal>
+
+    <a-modal
+      v-model="conditionVisible"
+      :title="t('universeManager.editConditions')"
+      :confirmLoading="savingConditions"
+      :okText="t('universeManager.save')"
+      :cancelText="t('universeManager.cancel')"
+      @ok="saveConditions"
+      @cancel="conditionVisible = false">
+      <a-spin :spinning="tagsLoading">
+        <small class="field-hint">{{ t('universeManager.smartHint') }}</small>
+        <a-checkbox-group v-model="selectedConditionCodes" class="condition-groups">
+          <div v-for="group in tagGroups" :key="group.category" class="condition-group">
+            <h4>{{ t(`symbolScreener.category.${group.category}`) }}</h4>
+            <a-checkbox v-for="tag in group.tags" :key="tag.code" :value="tag.code">
+              {{ tag.name || tag.code }}
+            </a-checkbox>
+          </div>
+        </a-checkbox-group>
+      </a-spin>
     </a-modal>
 
     <a-drawer :visible="drawerVisible" :title="drawerTitle" width="min(760px, 92vw)" @close="drawerVisible = false">
@@ -115,7 +140,10 @@
 
 <script>
 import { mapState } from 'vuex'
-import { cloneUniverse, createUniverse, getUniverseMembers, getUniverses, replaceUniverseMembers } from '@/api/universe'
+import { cloneUniverse, createUniverse, getUniverseMembers, getUniverses, replaceUniverseMembers, updateUniverse } from '@/api/universe'
+import { getTags } from '@/api/tags'
+
+const CATEGORY_ORDER = ['industry', 'concept', 'event', 'quote']
 
 export default {
   name: 'UniverseManager',
@@ -138,7 +166,13 @@ drawerUniverse: null,
 members: [],
 memberKeyword: '',
 memberPage: 1,
-memberPageSize: 50
+memberPageSize: 50,
+      conditionVisible: false,
+conditionUniverse: null,
+selectedConditionCodes: [],
+conditionTags: [],
+tagsLoading: false,
+savingConditions: false
     }
   },
   computed: {
@@ -174,6 +208,11 @@ memberPageSize: 50
     pagedMembers () {
       const start = (this.memberPage - 1) * this.memberPageSize
       return this.filteredMembers.slice(start, start + this.memberPageSize)
+    },
+    tagGroups () {
+      return CATEGORY_ORDER
+        .map(category => ({ category, tags: this.conditionTags.filter(tag => tag.category === category) }))
+        .filter(group => group.tags.length)
     }
   },
   watch: {
@@ -189,7 +228,11 @@ memberPageSize: 50
     marketText (market) { return this.t(`universeManager.market.${market || 'Mixed'}`) },
     marketIcon (market) { return { Crypto: 'thunderbolt', CNStock: 'stock', HKStock: 'bank', USStock: 'global' }[market] || 'appstore' },
     marketClass (market) { return `market-${String(market || 'mixed').toLowerCase()}` },
-    isEditable (item) { return !item.is_system && item.universe_type === 'manual' },
+    isEditable (item) { return !item.is_system && (item.universe_type === 'manual' || this.isSmart(item)) },
+    isSmart (item) { return item && item.universe_type === 'smart' },
+    tagCodesFor (item) {
+      return ((item.metadata && item.metadata.conditions) || []).map(condition => condition.tag_code)
+    },
     formatWeight (value) { return value === null || value === undefined ? '-' : `${(Number(value) * 100).toFixed(2)}%` },
     async loadUniverses () {
       this.loading = true
@@ -220,6 +263,7 @@ memberPageSize: 50
       } catch (error) { this.$message.error(error.backendMessage || error.message || this.t('universeManager.saveFailed')) } finally { this.saving = false }
     },
     async editUniverse (item) {
+      if (this.isSmart(item)) return this.openConditions(item)
       try {
         const payload = this.unwrap(await getUniverseMembers(item.id)) || {}
         this.editingId = item.id
@@ -228,6 +272,34 @@ memberPageSize: 50
         this.form.memberText = (payload.members || []).map(member => item.market === 'Mixed' ? `${member.market}:${member.symbol}` : member.symbol).join('\n')
         this.editorVisible = true
       } catch (error) { this.$message.error(error.backendMessage || error.message || this.t('universeManager.loadMembersFailed')) }
+    },
+    async openConditions (item) {
+      this.conditionUniverse = item
+      this.selectedConditionCodes = this.tagCodesFor(item)
+      this.conditionVisible = true
+      if (this.conditionTags.length) return
+      this.tagsLoading = true
+      try {
+        const payload = this.unwrap(await getTags()) || {}
+        this.conditionTags = (payload.items || []).filter(tag => tag.status !== 'data_required')
+      } catch (error) {
+        this.$message.error(error.backendMessage || error.message || this.t('symbolScreener.loadTagsFailed'))
+      } finally { this.tagsLoading = false }
+    },
+    async saveConditions () {
+      if (!this.conditionUniverse) return
+      if (!this.selectedConditionCodes.length) return this.$message.warning(this.t('universeManager.conditionsEmpty'))
+      this.savingConditions = true
+      try {
+        await updateUniverse(this.conditionUniverse.id, {
+          conditions: this.selectedConditionCodes.map(code => ({ tag_code: code }))
+        })
+        this.$message.success(this.t('universeManager.conditionsUpdated'))
+        this.conditionVisible = false
+        await this.loadUniverses()
+      } catch (error) {
+        this.$message.error(error.backendMessage || error.message || this.t('universeManager.saveFailed'))
+      } finally { this.savingConditions = false }
     },
     async viewMembers (item) {
       this.drawerUniverse = item; this.members = []; this.memberKeyword = ''; this.memberPage = 1; this.drawerVisible = true; this.membersLoading = true
@@ -249,5 +321,5 @@ memberPageSize: 50
 
 <style lang="less" scoped>
 .member-pagination{margin-top:14px;text-align:right}
-.universe-page{min-height:calc(100vh - 64px);padding:20px;background:#f4f6f8;color:#1f2933}.page-header{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:16px}.kicker{color:#52c41a;font-size:12px;font-weight:800;text-transform:uppercase}.page-header h1{margin:3px 0 4px;font-size:28px}.page-header p{margin:0;color:#667085}.header-actions{display:flex;gap:8px}.summary-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}.summary-card{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border:1px solid #e5e7eb;border-radius:10px;background:#fff}.summary-card span{color:#667085;font-size:12px}.summary-card strong{font-size:23px}.summary-card .summary-date{font-size:18px}.workspace-card{min-height:480px;padding:0 18px 18px;border:1px solid #e5e7eb;border-radius:10px;background:#fff}.toolbar{display:flex;gap:10px;margin-bottom:14px}.toolbar .ant-input-search{max-width:360px}.toolbar .ant-select{width:180px}.catalog-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.universe-item{display:flex;min-height:190px;flex-direction:column;padding:15px;border:1px solid #e5e7eb;border-radius:10px;transition:border-color .2s,transform .2s}.universe-item:hover{border-color:#52c41a;transform:translateY(-1px)}.item-topline{display:flex;align-items:center;gap:10px}.universe-icon{display:flex;width:38px;height:38px;align-items:center;justify-content:center;border-radius:9px;background:#edf7e8;color:#52c41a;font-size:17px}.market-crypto{background:#fff5e6;color:#fa8c16}.market-hkstock{background:#fff0f6;color:#eb2f96}.market-usstock{background:#eaf3ff;color:#1677ff}.item-title{display:flex;min-width:0;flex:1;flex-direction:column}.item-title strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.item-title span{color:#667085;font-size:12px}.item-stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:17px 0}.item-stats>div{display:flex;flex-direction:column;padding:9px;border-radius:7px;background:#f7f8fa}.item-stats span{color:#667085;font-size:11px}.item-stats strong{margin-top:2px;font-size:15px}.item-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:auto}.field-label{display:block;margin:14px 0 6px;font-weight:700}.full-width{width:100%}.field-hint{display:block;margin-top:6px;color:#98a2b3}.drawer-toolbar{display:flex;align-items:center;gap:12px;margin-bottom:12px}.drawer-toolbar .ant-input-search{max-width:360px}.member-table-wrap{overflow:auto;border:1px solid #e5e7eb;border-radius:8px}.member-table{width:100%;border-collapse:collapse}.member-table th,.member-table td{padding:10px 12px;border-bottom:1px solid #edf0f3;text-align:left}.member-table th{background:#f7f8fa;color:#667085;font-size:12px}.theme-dark{background:#0b0b0b;color:#f5f5f5}.theme-dark h1{color:#f5f5f5}.theme-dark .summary-card,.theme-dark .workspace-card{border-color:#2b2b2b;background:#151515}.theme-dark .summary-card span,.theme-dark .page-header p,.theme-dark .item-title span,.theme-dark .item-stats span{color:#a7a7a7}.theme-dark .universe-item{border-color:#2b2b2b}.theme-dark .item-stats>div{background:#1d1d1d}.theme-dark .member-table-wrap{border-color:#303030}.theme-dark .member-table th{background:#1d1d1d}.theme-dark .member-table th,.theme-dark .member-table td{border-color:#303030}@media(max-width:1200px){.catalog-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:760px){.universe-page{padding:14px}.page-header{flex-direction:column}.summary-row{grid-template-columns:repeat(2,minmax(0,1fr))}.catalog-grid{grid-template-columns:1fr}.toolbar{flex-direction:column}.toolbar .ant-input-search,.toolbar .ant-select{width:100%;max-width:none}}
+.universe-page{min-height:calc(100vh - 64px);padding:20px;background:#f4f6f8;color:#1f2933}.page-header{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:16px}.kicker{color:#52c41a;font-size:12px;font-weight:800;text-transform:uppercase}.page-header h1{margin:3px 0 4px;font-size:28px}.page-header p{margin:0;color:#667085}.header-actions{display:flex;gap:8px}.summary-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}.summary-card{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border:1px solid #e5e7eb;border-radius:10px;background:#fff}.summary-card span{color:#667085;font-size:12px}.summary-card strong{font-size:23px}.summary-card .summary-date{font-size:18px}.workspace-card{min-height:480px;padding:0 18px 18px;border:1px solid #e5e7eb;border-radius:10px;background:#fff}.toolbar{display:flex;gap:10px;margin-bottom:14px}.toolbar .ant-input-search{max-width:360px}.toolbar .ant-select{width:180px}.catalog-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.universe-item{display:flex;min-height:190px;flex-direction:column;padding:15px;border:1px solid #e5e7eb;border-radius:10px;transition:border-color .2s,transform .2s}.universe-item:hover{border-color:#52c41a;transform:translateY(-1px)}.item-topline{display:flex;align-items:center;gap:10px}.universe-icon{display:flex;width:38px;height:38px;align-items:center;justify-content:center;border-radius:9px;background:#edf7e8;color:#52c41a;font-size:17px}.market-crypto{background:#fff5e6;color:#fa8c16}.market-hkstock{background:#fff0f6;color:#eb2f96}.market-usstock{background:#eaf3ff;color:#1677ff}.item-title{display:flex;min-width:0;flex:1;flex-direction:column}.item-title strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.item-title span{color:#667085;font-size:12px}.item-stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:17px 0}.item-stats>div{display:flex;flex-direction:column;padding:9px;border-radius:7px;background:#f7f8fa}.item-stats span{color:#667085;font-size:11px}.item-stats strong{margin-top:2px;font-size:15px}.item-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:auto}.field-label{display:block;margin:14px 0 6px;font-weight:700}.full-width{width:100%}.field-hint{display:block;margin-top:6px;color:#98a2b3}.drawer-toolbar{display:flex;align-items:center;gap:12px;margin-bottom:12px}.drawer-toolbar .ant-input-search{max-width:360px}.member-table-wrap{overflow:auto;border:1px solid #e5e7eb;border-radius:8px}.member-table{width:100%;border-collapse:collapse}.member-table th,.member-table td{padding:10px 12px;border-bottom:1px solid #edf0f3;text-align:left}.member-table th{background:#f7f8fa;color:#667085;font-size:12px}.theme-dark{background:#0b0b0b;color:#f5f5f5}.theme-dark h1{color:#f5f5f5}.theme-dark .summary-card,.theme-dark .workspace-card{border-color:#2b2b2b;background:#151515}.theme-dark .summary-card span,.theme-dark .page-header p,.theme-dark .item-title span,.theme-dark .item-stats span{color:#a7a7a7}.theme-dark .universe-item{border-color:#2b2b2b}.theme-dark .item-stats>div{background:#1d1d1d}.theme-dark .member-table-wrap{border-color:#303030}.theme-dark .member-table th{background:#1d1d1d}.theme-dark .member-table th,.theme-dark .member-table td{border-color:#303030}.item-conditions{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:-6px 0 12px}.item-conditions__label{margin-right:4px;color:#667085;font-size:11px}.condition-groups{display:block;margin-top:12px}.condition-group{margin-bottom:12px}.condition-group h4{margin:0 0 6px;font-size:12px;text-transform:uppercase;color:#667085}.condition-group .ant-checkbox-wrapper{margin:0 14px 6px 0}@media(max-width:1200px){.catalog-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:760px){.universe-page{padding:14px}.page-header{flex-direction:column}.summary-row{grid-template-columns:repeat(2,minmax(0,1fr))}.catalog-grid{grid-template-columns:1fr}.toolbar{flex-direction:column}.toolbar .ant-input-search,.toolbar .ant-select{width:100%;max-width:none}}
 </style>

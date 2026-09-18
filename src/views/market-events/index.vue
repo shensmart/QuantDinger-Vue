@@ -69,9 +69,7 @@
                   <td>{{ row.rank === null || row.rank === undefined ? '-' : row.rank }}</td>
                   <td class="mono">{{ row.symbol }}</td>
                   <td>{{ row.name || '-' }}</td>
-                  <td v-for="column in extraColumns" :key="column.key">
-                    {{ formatCell(row, column) }}
-                  </td>
+                  <td v-for="column in extraColumns" :key="column.key" :class="{ 'text-block': column.key === 'analysis_content' }" v-text="formatCell(row, column)" />
                   <td class="row-actions">
                     <a-button size="small" @click="addToWatchlist(row)">{{ t('marketEvents.watch') }}</a-button>
                     <a-button size="small" type="link" @click="createUniverse(row)">{{ t('marketEvents.createUniverse') }}</a-button>
@@ -115,11 +113,9 @@ const COLUMNS = {
     { key: 'limit_up_reason', title: 'marketEvents.columns.reason' }
   ],
   ladder: [
-    { key: 'board', title: 'marketEvents.columns.board' },
     { key: 'board_num', title: 'marketEvents.columns.boards' }
   ],
   hotList: [
-    { key: 'rank', title: 'marketEvents.columns.hotRank' },
     { key: 'heat', title: 'marketEvents.columns.heat' },
     { key: 'rank_change', title: 'marketEvents.columns.rankChange' }
   ],
@@ -155,7 +151,7 @@ export default {
     sortOptions () {
       if (this.activeTab === 'hotList') {
         return [
-          { value: 'rank', label: this.t('marketEvents.columns.hotRank') },
+          { value: 'rank', label: this.t('marketEvents.columns.heat') },
           { value: 'name', label: this.t('marketEvents.columns.name') }
         ]
       }
@@ -220,7 +216,19 @@ export default {
       if (value === '-' || value === null || value === undefined) return '-'
       if (column.money) return this.formatMoney(value)
       if (column.percent) return `${(Number(value) * 100).toFixed(2)}%`
+      if (column.key === 'analysis_content') return this.cleanAnalysis(value)
       return value
+    },
+    // HiThink wraps each point on its own line but pads the line ends with
+    // spaces and appends an AI disclaimer. Under `white-space: pre-wrap` those
+    // stray spaces show up as bogus indentation, so normalise before rendering.
+    cleanAnalysis (value) {
+      return String(value)
+        .replace(/[\s\n]*（免责声明[^）]*）\s*$/, '')
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean)
+        .join('\n')
     },
     formatMoney (value) {
       const amount = Number(value)
@@ -301,6 +309,7 @@ export default {
 .event-table th{background:#f7f8fa;color:#667085;font-size:12px}
 .mono{font-family:Menlo,Consolas,monospace}
 .row-actions{white-space:nowrap}
+.text-block{white-space:pre-wrap;min-width:420px;max-width:760px}
 .pagination{margin-top:14px;text-align:right}
 .theme-dark{background:#0b0b0b;color:#f5f5f5}
 .theme-dark h1{color:#f5f5f5}

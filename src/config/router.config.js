@@ -68,6 +68,13 @@ export const asyncRouterMap = [
         component: () => import('@/views/market-events'),
         meta: { title: 'menu.dashboard.marketEvents', keepAlive: true, icon: 'fire', permission: ['dashboard'] }
       },
+      // Symbol screener over the tag catalogue (industry/concept/event/quote).
+      {
+        path: '/symbol-screener',
+        name: 'SymbolScreener',
+        component: () => import('@/views/symbol-screener'),
+        meta: { title: 'menu.dashboard.symbolScreener', keepAlive: true, icon: 'filter', permission: ['dashboard'] }
+      },
       // Broker accounts.
       {
         path: '/broker-accounts',

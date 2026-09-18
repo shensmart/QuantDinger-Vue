@@ -49,6 +49,9 @@
               <div class="qt-symbol-option">
                 <span class="qt-symbol-option-name">{{ item.symbol }}</span>
                 <span v-if="item.name" class="qt-symbol-option-desc">{{ item.name }}</span>
+                <span v-if="(item.tags || []).length" class="qt-symbol-option-tags">
+                  <a-tag v-for="tag in item.tags.slice(0, 3)" :key="tag.code" class="qt-symbol-tag">{{ tag.name || tag.code }}</a-tag>
+                </span>
               </div>
             </a-select-option>
           </a-select>
@@ -540,9 +543,13 @@ import { formatExchangeCredentialLabel, isQuickTradeExchangeCredential } from '@
 import ExchangeAccountModal from '@/components/ExchangeAccountModal/ExchangeAccountModal.vue'
 import { placeQuickOrder, getQuickTradeBalance, getQuickTradePosition, getQuickTradeHistory, closeQuickTradePosition, cancelQuickTradeOrder } from '@/api/quick-trade'
 import { searchSymbols, getWatchlist } from '@/api/market'
+import { getSymbolsTags } from '@/api/tags'
 import { getUserInfo } from '@/api/login'
 import request from '@/utils/request'
 import { createVisibilityPolling } from '@/utils/visibilityPolling'
+
+// Tags only exist for A-shares; other markets would just get empty results.
+const isCnStockMarket = market => String(market || '').toLowerCase() === 'cnstock'
 import { broker } from '@/api/broker'
 
 export default {
@@ -601,6 +608,7 @@ export default {
       // symbol search
       currentSymbol: '',
       symbolSuggestions: [],
+      symbolTagRequestId: 0,
       symbolSearching: false,
       symbolSearchTimer: null,
       userId: null,
@@ -1113,8 +1121,10 @@ export default {
             this.symbolSuggestions = (res.data.items || res.data || []).map(item => ({
               value: item.symbol || '',
               symbol: item.symbol || '',
-              name: item.name || ''
+              name: item.name || '',
+              tags: []
             })).filter(item => item.value)
+            this.attachSymbolTags()
           } else {
             this.symbolSuggestions = []
           }
@@ -1125,6 +1135,24 @@ export default {
           this.symbolSearching = false
         }
       }, 300)
+    },
+    async attachSymbolTags () {
+      // A-share tags only; other markets have no tag catalogue. Best effort:
+      // a tag lookup failure must never break symbol search.
+      const suggestions = this.symbolSuggestions
+      if (suggestions.length === 0 || !isCnStockMarket(this.priceMarketParam)) return
+      const requestId = ++this.symbolTagRequestId
+      try {
+        const res = await getSymbolsTags(suggestions.map(item => item.symbol), { market: 'CNStock' })
+        const items = (res && res.data && res.data.items) || {}
+        if (requestId !== this.symbolTagRequestId) return
+        this.symbolSuggestions = suggestions.map(item => ({
+          ...item,
+          tags: items[item.symbol] || []
+        }))
+      } catch (e) {
+        console.warn('attachSymbolTags error:', e)
+      }
     },
     handleSymbolChange (value) {
       if (value && value !== this.currentSymbol) {
@@ -3572,4 +3600,5 @@ body.realdark .qt-leverage-popover,
     background: var(--primary-color, #52c41a);
   }
 }
+.qt-symbol-option-tags{display:inline-flex;gap:2px;margin-left:6px;vertical-align:middle}.qt-symbol-tag{margin:0;font-size:10px;line-height:16px}
 </style>
