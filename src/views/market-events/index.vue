@@ -38,65 +38,67 @@
         </a-tab-pane>
       </a-tabs>
 
-      <div class="toolbar">
-        <a-input-search v-model="keyword" allowClear :placeholder="t('marketEvents.search')" />
-        <a-select v-if="activeTab === 'dragonTiger'" v-model="boardType" @change="loadActiveTab">
-          <a-select-option value="all">{{ t('marketEvents.board.all') }}</a-select-option>
-          <a-select-option value="org">{{ t('marketEvents.board.org') }}</a-select-option>
-          <a-select-option value="hot_money">{{ t('marketEvents.board.hotMoney') }}</a-select-option>
-        </a-select>
-        <a-select v-model="sortField" @change="applySort">
-          <a-select-option v-for="option in sortOptions" :key="option.value" :value="option.value">{{ option.label }}</a-select-option>
-        </a-select>
-      </div>
+      <dragon-tiger-panel
+        v-if="activeTab === 'dragonTiger'"
+        :trade-date="tradeDateString()"
+        @degrade="onPanelDegrade" />
 
-      <a-spin :spinning="loading">
-        <a-empty v-if="!visibleRows.length" :description="t('marketEvents.empty')" />
-        <div v-else class="table-wrap">
-          <table class="event-table">
-            <thead>
-              <tr>
-                <th>{{ t('marketEvents.columns.rank') }}</th>
-                <th>{{ t('marketEvents.columns.symbol') }}</th>
-                <th>{{ t('marketEvents.columns.name') }}</th>
-                <th v-for="column in extraColumns" :key="column.key">{{ column.title }}</th>
-                <th>{{ t('marketEvents.columns.actions') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(row, index) in pagedRows" :key="row.symbol + row.event_type + index">
-                <td>{{ row.rank === null || row.rank === undefined ? '-' : row.rank }}</td>
-                <td class="mono">{{ row.symbol }}</td>
-                <td>{{ row.name || '-' }}</td>
-                <td v-for="column in extraColumns" :key="column.key">
-                  {{ formatCell(row, column) }}
-                </td>
-                <td class="row-actions">
-                  <a-button size="small" @click="addToWatchlist(row)">{{ t('marketEvents.watch') }}</a-button>
-                  <a-button size="small" type="link" @click="createUniverse(row)">{{ t('marketEvents.createUniverse') }}</a-button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+      <template v-else>
+        <div class="toolbar">
+          <a-input-search v-model="keyword" allowClear :placeholder="t('marketEvents.search')" />
+          <a-select v-model="sortField" @change="applySort">
+            <a-select-option v-for="option in sortOptions" :key="option.value" :value="option.value">{{ option.label }}</a-select-option>
+          </a-select>
         </div>
-        <a-pagination
-          v-if="filteredRows.length > pageSize"
-          class="pagination"
-          :current="page"
-          :pageSize="pageSize"
-          :total="filteredRows.length"
-          showSizeChanger
-          @change="onPageChange" />
-      </a-spin>
+
+        <a-spin :spinning="loading">
+          <a-empty v-if="!visibleRows.length" :description="t('marketEvents.empty')" />
+          <div v-else class="table-wrap">
+            <table class="event-table">
+              <thead>
+                <tr>
+                  <th>{{ t('marketEvents.columns.rank') }}</th>
+                  <th>{{ t('marketEvents.columns.symbol') }}</th>
+                  <th>{{ t('marketEvents.columns.name') }}</th>
+                  <th v-for="column in extraColumns" :key="column.key">{{ column.title }}</th>
+                  <th>{{ t('marketEvents.columns.actions') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(row, index) in pagedRows" :key="row.symbol + row.event_type + index">
+                  <td>{{ row.rank === null || row.rank === undefined ? '-' : row.rank }}</td>
+                  <td class="mono">{{ row.symbol }}</td>
+                  <td>{{ row.name || '-' }}</td>
+                  <td v-for="column in extraColumns" :key="column.key">
+                    {{ formatCell(row, column) }}
+                  </td>
+                  <td class="row-actions">
+                    <a-button size="small" @click="addToWatchlist(row)">{{ t('marketEvents.watch') }}</a-button>
+                    <a-button size="small" type="link" @click="createUniverse(row)">{{ t('marketEvents.createUniverse') }}</a-button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <a-pagination
+            v-if="filteredRows.length > pageSize"
+            class="pagination"
+            :current="page"
+            :pageSize="pageSize"
+            :total="filteredRows.length"
+            showSizeChanger
+            @change="onPageChange" />
+        </a-spin>
+      </template>
     </section>
   </div>
 </template>
 
 <script>
 import { mapState } from 'vuex'
+import DragonTigerPanel from './DragonTigerPanel.vue'
 import {
   getAnomalyList,
-  getDragonTiger,
   getHotList,
   getLimitUpLadder,
   getLimitUpPool
@@ -116,12 +118,6 @@ const COLUMNS = {
     { key: 'board', title: 'marketEvents.columns.board' },
     { key: 'board_num', title: 'marketEvents.columns.boards' }
   ],
-  dragonTiger: [
-    { key: 'net_value', title: 'marketEvents.columns.netBuy', money: true },
-    { key: 'net_rate', title: 'marketEvents.columns.netRate', percent: true },
-    { key: 'buy_value', title: 'marketEvents.columns.buyValue', money: true },
-    { key: 'limit_reason', title: 'marketEvents.columns.reason' }
-  ],
   hotList: [
     { key: 'rank', title: 'marketEvents.columns.hotRank' },
     { key: 'heat', title: 'marketEvents.columns.heat' },
@@ -135,13 +131,13 @@ const COLUMNS = {
 
 export default {
   name: 'MarketEvents',
+  components: { DragonTigerPanel },
   data () {
     return {
       activeTab: 'limitUp',
       loading: false,
       errorMessage: '',
       keyword: '',
-      boardType: 'all',
       sortField: 'rank',
       tradeDate: null,
       rows: [],
@@ -234,8 +230,15 @@ export default {
       return amount.toFixed(2)
     },
     onPageChange (page, pageSize) { this.page = page; this.pageSize = pageSize },
+    tradeDateString () {
+      if (this.tradeDate && this.tradeDate.format) return this.tradeDate.format('YYYY-MM-DD')
+      return undefined
+    },
+    onPanelDegrade (message) { this.errorMessage = message },
     applySort () { this.page = 1 },
     async loadActiveTab () {
+      // The dragon-tiger tab is its own panel with its own endpoints.
+      if (this.activeTab === 'dragonTiger') { this.errorMessage = ''; return }
       this.loading = true
       this.errorMessage = ''
       this.page = 1
@@ -247,7 +250,6 @@ export default {
         let response
         if (this.activeTab === 'limitUp') response = await getLimitUpPool(params)
         else if (this.activeTab === 'ladder') response = await getLimitUpLadder(params)
-        else if (this.activeTab === 'dragonTiger') response = await getDragonTiger({ ...params, board_type: this.boardType })
         else if (this.activeTab === 'hotList') response = await getHotList({ ...params, limit: 30 })
         else response = await getAnomalyList(params)
         const payload = this.unwrap(response) || {}
