@@ -143,7 +143,7 @@ import { mapState } from 'vuex'
 import { cloneUniverse, createUniverse, getUniverseMembers, getUniverses, replaceUniverseMembers, updateUniverse } from '@/api/universe'
 import { getTags } from '@/api/tags'
 
-const CATEGORY_ORDER = ['industry', 'concept', 'event', 'quote']
+const CATEGORY_ORDER = ['industry', 'concept', 'region', 'feature', 'event', 'quote']
 
 export default {
   name: 'UniverseManager',
